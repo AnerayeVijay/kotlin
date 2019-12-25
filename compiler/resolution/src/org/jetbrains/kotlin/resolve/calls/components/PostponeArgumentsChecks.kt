@@ -26,6 +26,7 @@ import org.jetbrains.kotlin.resolve.calls.inference.model.TypeVariableForLambdaR
 import org.jetbrains.kotlin.resolve.calls.model.*
 import org.jetbrains.kotlin.types.UnwrappedType
 import org.jetbrains.kotlin.types.Variance
+import org.jetbrains.kotlin.types.model.typeConstructor
 import org.jetbrains.kotlin.types.typeUtil.builtIns
 import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 
@@ -57,13 +58,15 @@ private fun preprocessLambdaArgument(
     csBuilder: ConstraintSystemBuilder,
     argument: LambdaKotlinCallArgument,
     expectedType: UnwrappedType?,
-    forceResolution: Boolean = false
+    forceResolution: Boolean = false,
+    returnTypeVariable: TypeVariableForLambdaReturnType? = null
 ): ResolvedAtom {
     if (expectedType != null && !forceResolution && csBuilder.isTypeVariable(expectedType)) {
         return LambdaWithTypeVariableAsExpectedTypeAtom(argument, expectedType)
     }
 
-    val resolvedArgument = extractLambdaInfoFromFunctionalType(expectedType, argument) ?: extraLambdaInfo(expectedType, argument, csBuilder)
+    val resolvedArgument = extractLambdaInfoFromFunctionalType(expectedType, argument, returnTypeVariable)
+        ?: extraLambdaInfo(expectedType, argument, csBuilder)
 
     if (expectedType != null) {
         val lambdaType = createFunctionType(
@@ -110,7 +113,11 @@ private fun extraLambdaInfo(
     )
 }
 
-private fun extractLambdaInfoFromFunctionalType(expectedType: UnwrappedType?, argument: LambdaKotlinCallArgument): ResolvedLambdaAtom? {
+private fun extractLambdaInfoFromFunctionalType(
+    expectedType: UnwrappedType?,
+    argument: LambdaKotlinCallArgument,
+    returnTypeVariable: TypeVariableForLambdaReturnType? = null
+): ResolvedLambdaAtom? {
     if (expectedType == null || !expectedType.isBuiltinFunctionalType) return null
     val parameters = extractLambdaParameters(expectedType, argument)
 
@@ -124,7 +131,7 @@ private fun extractLambdaInfoFromFunctionalType(expectedType: UnwrappedType?, ar
         receiverType,
         parameters,
         returnType,
-        typeVariableForLambdaReturnType = null,
+        typeVariableForLambdaReturnType = returnTypeVariable,
         expectedType = expectedType
     )
 }
@@ -141,9 +148,21 @@ private fun extractLambdaParameters(expectedType: UnwrappedType, argument: Lambd
     }
 }
 
-fun LambdaWithTypeVariableAsExpectedTypeAtom.transformToResolvedLambda(csBuilder: ConstraintSystemBuilder): ResolvedLambdaAtom {
-    val fixedExpectedType = (csBuilder.buildCurrentSubstitutor() as NewTypeSubstitutor).safeSubstitute(expectedType)
-    val resolvedLambdaAtom = preprocessLambdaArgument(csBuilder, atom, fixedExpectedType, forceResolution = true) as ResolvedLambdaAtom
+fun LambdaWithTypeVariableAsExpectedTypeAtom.transformToResolvedLambda(
+    csBuilder: ConstraintSystemBuilder,
+    expectedType: UnwrappedType? = null,
+    returnTypeVariable: TypeVariableForLambdaReturnType? = null
+): ResolvedLambdaAtom {
+    subResolvedAtoms?.firstOrNull()?.safeAs<ResolvedLambdaAtom>()?.let { return it }
+    val fixedExpectedType = (csBuilder.buildCurrentSubstitutor() as NewTypeSubstitutor)
+        .safeSubstitute(expectedType ?: this.expectedType)
+    val resolvedLambdaAtom = preprocessLambdaArgument(
+        csBuilder,
+        atom,
+        fixedExpectedType,
+        forceResolution = true,
+        returnTypeVariable
+    ) as ResolvedLambdaAtom
 
     setAnalyzed(resolvedLambdaAtom)
 
